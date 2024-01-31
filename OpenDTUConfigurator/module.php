@@ -3,6 +3,9 @@
 declare(strict_types=1);
 	class OpenDTUConfigurator extends IPSModule
 	{
+		const OPENDTU_IDENTIFIER = 'OpenDTU';
+		const AHOYDTU_IDENTIFIER = 'AhoyDTU';
+
 		public function Create()
 		{
 			//Never delete this line!
@@ -39,22 +42,22 @@ declare(strict_types=1);
 
 			//UTF-8 Fix for Symcon 6.3
             if (IPS_GetKernelDate() > 1670886000) {
-                $data->Payload = utf8_decode($data->Payload);
+                $data->Payload = mb_convert_encoding($data->Payload, 'ISO-8859-1', 'UTF-8');
             }
 
 			$topic = $data->Topic;
 			$payload = $data->Payload;
 
-			// Check for unknown DTU's
-			if ( strstr($topic, 'dtu/hostname' ) !== false )
+			// Check for unknown openDTU's
+			if ( strstr($topic, 'dtu/hostname') !== false )
 			{
-				$baseTopic = str_replace( 'dtu/hostname', '', $topic);
+				$baseTopic = str_replace('dtu/hostname', '', $topic);
 
-				if (array_search( $baseTopic, $topics) === false)
+				if (array_search($baseTopic, $topics) === false)
 				{
 					$topics[] = $baseTopic;
-					$dtu = array( "topic" => $baseTopic, "name" => $payload, "model" => "OpenDTU", 'ip'=> '', 'serial' => '', "inverters" => array() );
-					$devices[] = $dtu;
+					$dtuEntry = array( "topic" => $baseTopic, "name" => $payload, "model" => self::OPENDTU_IDENTIFIER, 'ip'=> '', 'serial' => '', "inverters" => array() );
+					$devices[] = $dtuEntry;
 
 					$this->LogMessage('New OpenDTU found: '.json_encode( $dtu ), KL_MESSAGE );
 
@@ -62,21 +65,46 @@ declare(strict_types=1);
 					$this->SendDebug("Devices Buffer", json_encode( $devices) , 0);
 
 				}
-
 				return;
-
 			}
+
+			
+			// Check for unknown ahoyDTU's
+			if (strstr($topic, 'device') !== false)
+			{
+				$baseTopic = str_replace('device', '', $topic);
+
+				if (array_search($baseTopic, $topics) === false)
+				{
+					$topics[] = $baseTopic;
+					$dtuEntry = array( "topic" => $baseTopic, "name" => $payload, "model" => self::AHOYDTU_IDENTIFIER, 'ip'=> '', 'serial' => '', "inverters" => array() );
+					$devices[] = $dtuEntry;
+
+					$this->LogMessage('New ahoyDTU found: '.json_encode($dtu), KL_MESSAGE );
+
+					$this->SetBuffer("Devices", json_encode($devices));
+					$this->SendDebug("Devices Buffer", json_encode($devices), 0);
+
+				}
+				return;
+			}
+
 
 			// Collect data of known DTU's
 
-			foreach ( $devices as $index => $device)
+			foreach ($devices as $index => $device)
 			{
-				if ( strstr($topic, $device['topic']) !== false )
+				if (strstr($topic, $device['topic']) === false)
 				{
-					$subTopic = substr( $topic, strlen($device['topic']) );
+					continue;
+				}
 
-					// Data from DTU
-					if ( strcmp( $subTopic, 'dtu/ip') === 0 )
+				$subTopic = substr($topic, strlen($device['topic']));
+
+				if (strcmp($device['model'], self::OPENDTU_IDENTIFIER))
+				{								
+					// IP address from OpenDTU
+					if (strcmp($subTopic, 'ip') === 0)
 					{
 						$devices[$index]['ip'] = $payload;
 					}
@@ -109,18 +137,48 @@ declare(strict_types=1);
 								$devices[$index]['inverters'][$inverterIndex]['name'] = $payload;
 							}
 						}
-
-
+					}
+					
+				} else 
+				{
+					// IP address from AhoyDTU
+					if (strcmp($subTopic, 'ip_addr') === 0)
+					{
+						$devices[$index]['ip'] = $payload;
 					}
 
-					$this->SetBuffer("Devices", json_encode( $devices) );
-					$this->SendDebug("Devices Buffer", json_encode( $devices) , 0);
+					// Data from Inverter
+					$topicParts = explode( '/', $subTopic);
+					$inverterName = $topicParts[0];			
 
-					return;
+					// Check for unknown inverters
+					$inverterIndex = array_search($inverterName, array_column($device['inverters'], 'serial'));
+
+					if ( $inverterIndex === false)
+					{
+						// Only add new inverters if hwversion is sent
+						if ($topicParts[1] == 'ch0' && $topicParts[2] == 'HWPartId')
+						{
+							$inverter = array('serial' => $inverterName, 'model' => $this->getModel($payload), 'name' => 'Microinverter '.$this->getModel( $payload ) , 'topic' => '', 'ip' => '', 'parent' => $device['topic']);
+							$devices[$index]['inverters'][] = $inverter;
+							$this->LogMessage('New inverter found: '.json_encode($inverter), KL_MESSAGE );
+
+							$this->AddReceiveDataFilter( $device['topic'].$inverterName.'/ch0' );
+						}
+					} 
+					else
+					{
+						if ( $topicParts[1] == 'ch0')
+						{
+							$devices[$index]['inverters'][$inverterIndex]['name'] = $inverterName;
+						}
+					}			
 				}
+				$this->SetBuffer("Devices", json_encode( $devices) );
+				$this->SendDebug("Devices Buffer", json_encode( $devices) , 0);
+
+				return;				
 			}
-
-
 		}
 
 		public function GetConfigurationForm()
@@ -139,7 +197,7 @@ declare(strict_types=1);
 					$dtuInstance['instanceID'] = $instanceID;
 					$dtuInstance['topic'] = IPS_GetProperty($instanceID, 'BaseTopic');
 					$dtuInstance['serial'] = '';
-					$dtuInstance['model'] = 'OpenDTU';
+					$dtuInstance['model'] = '';
 					$dtuInstance['name'] = IPS_GetName($instanceID);
 					$dtuInstance['ip'] = '';
 					$dtuInstance['id'] = IPS_GetProperty($instanceID, 'BaseTopic');
