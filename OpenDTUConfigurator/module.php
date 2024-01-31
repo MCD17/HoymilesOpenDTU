@@ -351,9 +351,15 @@ declare(strict_types=1);
 		private function ResetReceiveDataFilter()
 		{
 			$this->SetBuffer("Topics", "[]");
+			//Filter for OpenmDTU topics 
 			$this->AddReceiveDataFilter('/dtu/hostname');
 			$this->AddReceiveDataFilter('/dtu/ip');
-			$this->AddReceiveDataFilter('/device/hwpartnumber');			
+			$this->AddReceiveDataFilter('/device/hwpartnumber');
+			
+			//Filter for AhoyDTU topics
+			$this->AddReceiveDataFilter('/device');
+			$this->AddReceiveDataFilter('/ip_addr');
+			$this->AddReceiveDataFilter('/ch0/HWPartId');
 		}
 
 		private function AddReceiveDataFilter( $topic )
